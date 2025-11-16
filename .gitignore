@@ -1,0 +1,46 @@
+# Archivos de build
+bin/
+obj/
+out/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Rider
+.idea/
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+logs/
+
+# Secrets y configuración local
+appsettings.Development.json
+*.secrets.json
+.env
+
+# Bases de datos locales
+*.mdf
+*.ldf
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archivos temporales
+*.tmp
+*.temp
+*.swp
+*~
+
+# Backups
+*.bak
+backup/

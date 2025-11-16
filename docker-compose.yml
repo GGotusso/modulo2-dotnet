@@ -1,0 +1,57 @@
+﻿version: '3.8'
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: modulo2-sqlserver
+    ports:
+      - "1433:1433"
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "YourStrong@Passw0rd"
+      MSSQL_PID: "Express"
+      MSSQL_COLLATION: "Modern_Spanish_CI_AS"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    networks:
+      - modulo2-network
+
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: modulo2-sqlserver-init
+    depends_on:
+      - sqlserver
+    volumes:
+      - ./database/init.sql:/scripts/init.sql:ro
+    networks:
+      - modulo2-network
+    command: >
+      /bin/bash -c "
+      echo 'Esperando a que SQL Server esté listo...' &&
+      sleep 30 &&
+      /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P 'YourStrong@Passw0rd' -C -i /scripts/init.sql &&
+      echo 'Base de datos inicializada correctamente'
+      "
+    restart: "no"
+
+  validation-service:
+    build:
+      context: .
+      dockerfile: src/ValidationService/Dockerfile
+    container_name: modulo2-validation-service
+    environment:
+      - GlobalDbApi__BaseUrl=https://fun-bernetta-johannson-systems-v2-ba75677f.koyeb.app
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=Modulo2DB;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True;
+      - PollingIntervalSeconds=10
+    depends_on:
+      - sqlserver
+    networks:
+      - modulo2-network
+    restart: unless-stopped
+
+networks:
+  modulo2-network:
+    driver: bridge
+
+volumes:
+  sqlserver_data:
