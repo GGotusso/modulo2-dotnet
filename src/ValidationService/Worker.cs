@@ -7,8 +7,8 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly IGlobalDbApiClient _apiClient;
     private readonly IDatabaseService _databaseService;
-    private DateTime? _lastProcessedTime;
-    private readonly int _pollingIntervalSeconds = 10;
+    private string? _lastProcessedTransitId;  // Trackear por ID en lugar de timestamp
+    private readonly int _pollingIntervalSeconds = 5;  // Cambiar a 5 segundos
 
     public Worker(
         ILogger<Worker> logger,
@@ -26,7 +26,7 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("ValidationService iniciado. Polling cada {Interval} segundos", _pollingIntervalSeconds);
+        _logger.LogInformation("ValidationService iniciado. Polling cada {Interval} segundos (procesando ultimo transito)", _pollingIntervalSeconds);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -47,29 +47,34 @@ public class Worker : BackgroundService
     {
         try
         {
-            // Obtener nuevos tránsitos desde la API
-            var transits = await _apiClient.GetNewTransits(_lastProcessedTime);
+            // Obtener el último tránsito de la API
+            var transits = await _apiClient.GetNewTransits(null);
 
             if (transits == null || !transits.Any())
             {
-                _logger.LogDebug("No hay nuevos tránsitos para procesar");
+                _logger.LogInformation("No hay transitos disponibles en la API");
                 return;
             }
 
-            _logger.LogInformation("Procesando {Count} nuevo(s) transito(s)", transits.Count());
-
-            foreach (var transit in transits)
+            var lastTransit = transits.First();
+            
+            // Si ya procesamos este tránsito, no hacer nada
+            if (_lastProcessedTransitId == lastTransit.transit_id)
             {
-                await ProcessTransit(transit, cancellationToken);
+                _logger.LogInformation("✓ Ultimo transito ya fue procesado (ID: {TransitId}, Patente: {Plate})", 
+                    lastTransit.transit_id?.Substring(0, 8), 
+                    lastTransit.vehicle_plate);
+                return;
             }
 
-            // Actualizar timestamp del último procesado
-            _lastProcessedTime = transits
-                .Select(t => t.GetOccurredAtDateTime())
-                .Where(dt => dt.HasValue)
-                .DefaultIfEmpty(DateTime.UtcNow)
-                .Max() ?? DateTime.UtcNow;
-            _logger.LogDebug("Último procesamiento: {Time}", _lastProcessedTime);
+            _logger.LogInformation("Procesando nuevo transito: ID={TransitId}, Patente={Plate}", 
+                lastTransit.transit_id, 
+                lastTransit.vehicle_plate);
+
+            await ProcessTransit(lastTransit, cancellationToken);
+
+            // Actualizar el ID del último procesado
+            _lastProcessedTransitId = lastTransit.transit_id;
         }
         catch (Exception ex)
         {

@@ -26,14 +26,10 @@ public class GlobalDbApiClient : IGlobalDbApiClient
     {
         try
         {
-            var url = "/api/transits?order_by=occurred_at&order_dir=desc&limit=100";
+            // Solo obtener el último tránsito (limit=1)
+            var url = "/api/transits?order_by=occurred_at&order_dir=desc&limit=1";
             
-            if (since.HasValue)
-            {
-                url += $"&occurred_at_gte={since.Value:yyyy-MM-ddTHH:mm:ss}";
-            }
-            
-            _logger.LogInformation("Consultando nuevos transitos desde: {Since}", since);
+            _logger.LogInformation("Consultando ultimo transito");
             
             var response = await _httpClient.GetAsync(url);
             
@@ -41,7 +37,18 @@ public class GlobalDbApiClient : IGlobalDbApiClient
             {
                 var apiResponse = await response.Content.ReadFromJsonAsync<TransitListResponse>();
                 var transits = apiResponse?.data ?? new List<Transit>();
-                _logger.LogInformation("Transitos obtenidos: {Count}", transits.Count);
+                
+                if (transits.Any())
+                {
+                    _logger.LogInformation("Ultimo transito obtenido: Patente={Plate}, Fecha={Date}", 
+                        transits[0].vehicle_plate, 
+                        transits[0].occurred_at);
+                }
+                else
+                {
+                    _logger.LogDebug("No hay transitos disponibles");
+                }
+                
                 return transits;
             }
             else
