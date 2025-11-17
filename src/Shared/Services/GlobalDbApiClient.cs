@@ -3,14 +3,36 @@ using System.Net.Http.Json;
 
 namespace Shared.Services;
 
+/// <summary>
+/// Interface que define los métodos para comunicarse con la API externa de tránsitos
+/// </summary>
 public interface IGlobalDbApiClient
 {
+    /// <summary>
+    /// Obtiene el último tránsito desde la API
+    /// </summary>
     Task<List<Transit>> GetNewTransits(DateTime? since = null);
+    
+    /// <summary>
+    /// Verifica si un vehículo está registrado en el sistema
+    /// </summary>
     Task<bool> IsVehicleRegistered(string plate);
+    
+    /// <summary>
+    /// Crea un registro de pago para un vehículo registrado
+    /// </summary>
     Task<bool> CreatePayment(string plate, string? vehicleType = null);
+    
+    /// <summary>
+    /// Crea una multa para un vehículo no registrado
+    /// </summary>
     Task<bool> CreateFine(string plate, string? vehicleType = null);
 }
 
+/// <summary>
+/// Cliente HTTP para comunicarse con la API externa de Koyeb.
+/// Maneja todas las operaciones HTTP: GET (consultas) y POST (crear registros).
+/// </summary>
 public class GlobalDbApiClient : IGlobalDbApiClient
 {
     private readonly HttpClient _httpClient;
@@ -22,19 +44,28 @@ public class GlobalDbApiClient : IGlobalDbApiClient
         _logger = logger;
     }
 
+    /// <summary>
+    /// Obtiene el último tránsito desde la API externa.
+    /// Consulta: GET /api/transits?order_by=occurred_at&order_dir=desc&limit=1
+    /// Retorna solo el vehículo más reciente que pasó por el toll.
+    /// </summary>
     public async Task<List<Transit>> GetNewTransits(DateTime? since = null)
     {
         try
         {
-            // Solo obtener el último tránsito (limit=1)
+            // Construir URL para obtener solo el último tránsito (limit=1)
+            // Ordenado por fecha descendente para obtener el más reciente
             var url = "/api/transits?order_by=occurred_at&order_dir=desc&limit=1";
             
             _logger.LogInformation("Consultando ultimo transito");
             
+            // Hacer petición HTTP GET
             var response = await _httpClient.GetAsync(url);
             
             if (response.IsSuccessStatusCode)
             {
+                // Deserializar respuesta JSON a objeto C#
+                // La API devuelve: { "data": [...], "limit": 1, "offset": 0 }
                 var apiResponse = await response.Content.ReadFromJsonAsync<TransitListResponse>();
                 var transits = apiResponse?.data ?? new List<Transit>();
                 
@@ -64,18 +95,31 @@ public class GlobalDbApiClient : IGlobalDbApiClient
         }
     }
 
+    /// <summary>
+    /// Verifica si un vehículo está registrado en el sistema.
+    /// Consulta: GET /api/vehicles?plate={plate}
+    /// Retorna true si el vehículo existe, false si no está registrado.
+    /// </summary>
+    /// <param name="plate">Patente del vehículo a verificar</param>
     public async Task<bool> IsVehicleRegistered(string plate)
     {
         try
         {
             _logger.LogInformation("Verificando si vehiculo esta registrado - Plate: {Plate}", plate);
             
+            // Hacer petición HTTP GET con la patente como parámetro
             var response = await _httpClient.GetAsync($"/api/vehicles?plate={plate}");
             
             if (response.IsSuccessStatusCode)
             {
+                // Deserializar respuesta JSON
+                // La API devuelve: { "data": [...], "limit": 10, "offset": 0 }
                 var apiResponse = await response.Content.ReadFromJsonAsync<VehicleListResponse>();
                 var vehicles = apiResponse?.data ?? new List<Vehicle>();
+                
+                // Vehículo está registrado si:
+                // 1. La lista NO está vacía (existe en la BD)
+                // 2. Tiene un customer_id asociado (pertenece a un cliente)
                 bool isRegistered = vehicles.Count > 0 && vehicles[0].customer_id != null;
                 
                 _logger.LogInformation("Vehiculo {Plate} - Registrado: {IsRegistered}", plate, isRegistered);
@@ -84,22 +128,31 @@ public class GlobalDbApiClient : IGlobalDbApiClient
             else
             {
                 _logger.LogWarning("Error consultando vehiculo - StatusCode: {StatusCode}", response.StatusCode);
-                return false;
+                return false; // Asumimos no registrado en caso de error
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Excepcion consultando vehiculo");
-            return false;
+            return false; // Asumimos no registrado en caso de error
         }
     }
 
+    /// <summary>
+    /// Crea un registro de pago para un vehículo registrado.
+    /// Endpoint: POST /api/payments
+    /// NOTA: amount=0 es placeholder - será actualizado por el equipo de pagos posteriormente.
+    /// </summary>
+    /// <param name="plate">Patente del vehículo</param>
+    /// <param name="vehicleType">Tipo de vehículo (opcional)</param>
     public async Task<bool> CreatePayment(string plate, string? vehicleType = null)
     {
         try
         {
             _logger.LogInformation("Creando pago para plate: {Plate}, tipo: {Type}", plate, vehicleType ?? "N/A");
             
+            // Crear objeto de pago con estructura requerida por la API
+            // amount=0: Placeholder - otro equipo calculará el monto real según tarifas
             var payment = new
             {
                 plate = plate,
@@ -110,6 +163,7 @@ public class GlobalDbApiClient : IGlobalDbApiClient
                 requested_at = DateTime.UtcNow
             };
             
+            // Hacer petición HTTP POST con el objeto serializado a JSON
             var response = await _httpClient.PostAsJsonAsync("/api/payments", payment);
             
             if (response.IsSuccessStatusCode)
@@ -119,6 +173,7 @@ public class GlobalDbApiClient : IGlobalDbApiClient
             }
             else
             {
+                // Leer el cuerpo de la respuesta para diagnóstico
                 var error = await response.Content.ReadAsStringAsync();
                 _logger.LogWarning("Error creando pago - StatusCode: {StatusCode}, Error: {Error}", 
                     response.StatusCode, error);
@@ -132,12 +187,21 @@ public class GlobalDbApiClient : IGlobalDbApiClient
         }
     }
 
+    /// <summary>
+    /// Crea un registro de multa para un vehículo NO registrado.
+    /// Endpoint: POST /api/fines
+    /// NOTA: amount=0 es placeholder - será actualizado por el equipo de multas posteriormente.
+    /// </summary>
+    /// <param name="plate">Patente del vehículo</param>
+    /// <param name="vehicleType">Tipo de vehículo (opcional)</param>
     public async Task<bool> CreateFine(string plate, string? vehicleType = null)
     {
         try
         {
             _logger.LogInformation("Creando multa para plate: {Plate}, tipo: {Type}", plate, vehicleType ?? "N/A");
             
+            // Crear objeto de multa con estructura requerida por la API
+            // amount=0: Placeholder - otro equipo calculará el monto real según infracciones
             var fine = new
             {
                 plate = plate,
@@ -148,6 +212,7 @@ public class GlobalDbApiClient : IGlobalDbApiClient
                 issued_at = DateTime.UtcNow
             };
             
+            // Hacer petición HTTP POST con el objeto serializado a JSON
             var response = await _httpClient.PostAsJsonAsync("/api/fines", fine);
             
             if (response.IsSuccessStatusCode)
@@ -157,12 +222,19 @@ public class GlobalDbApiClient : IGlobalDbApiClient
             }
             else
             {
+                // Leer el cuerpo de la respuesta para diagnóstico
                 var error = await response.Content.ReadAsStringAsync();
                 _logger.LogWarning("Error creando multa - StatusCode: {StatusCode}, Error: {Error}", 
                     response.StatusCode, error);
                 return false;
             }
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Excepcion creando multa");
+            return false;
+        }
+    }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Excepcion creando multa");
